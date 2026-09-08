@@ -23,7 +23,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h>   /* BTN3 매핑 테스트에서 UART 문자열 길이 계산(strlen)에 사용 */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,6 +47,11 @@ typedef struct
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define BUTTON_DEBOUNCE_MS 20  /* 버튼 접점이 튀는(chattering) 시간을 걸러내기 위한 안정화 대기 시간 */
+
+/* 1이면 부팅 직후 LED 배선 매핑 테스트(BTN3_Action)를 자동으로 한 번 실행한다.
+   버튼을 누르지 않아도 되므로 BTN3 배선 여부와 무관하게 확인할 수 있다.
+   배선 매핑 확인이 끝났으므로 0으로 꺼둠 - 다시 배선을 만지게 되면 1로 바꾸면 됨. */
+#define RUN_MAPPING_TEST_AT_BOOT 0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -126,6 +131,18 @@ int main(void)
   Button_Init(&btn4);
 
   SetDecoderOutput(ledIndex);  /* 시작 시 LED0(index 0)을 켠 상태로 초기화 */
+
+  /* 부팅 배너: UART가 살아있는지 바로 확인하기 위한 신호.
+     리셋하자마자 이 줄이 시리얼 모니터에 뜨면 UART/포트/보드레이트는 정상이라는 뜻. */
+  {
+    static const char banner[] = "\r\n=== 04-74ls138-4btn ready (115200 8N1) ===\r\n";
+    HAL_UART_Transmit(&huart2, (const uint8_t *)banner, sizeof(banner) - 1, HAL_MAX_DELAY);
+  }
+
+#if RUN_MAPPING_TEST_AT_BOOT
+  /* 배선 매핑 확인이 끝나면 RUN_MAPPING_TEST_AT_BOOT를 0으로 바꿔서 끄면 된다. */
+  BTN3_Action();
+#endif
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -280,43 +297,73 @@ static void BTN1_Action(void)
   }
 }
 
-/* BTN2를 누르면 BTN1과 같은 방식으로 LED가 순서대로 켜지되, LED0→LED7→LED0으로
-   왕복하는 동작을 3번 반복한다. 매 스텝마다 대기 시간을 조금씩 줄여서
-   (BTN2_DELAY_STEP_MS씩 감소, BTN2_MIN_DELAY_MS 밑으로는 안 내려감) 갈수록
-   빨라지는 느낌을 준다 - 3번 왕복하는 동안 속도가 리셋되지 않고 계속 가속된다. */
+/* BTN2를 누르면 BTN1과 같은 방식으로 LED0->LED7을 한 방향(편도)으로 켜는 동작을
+   3번 반복한다. 매 스텝마다 대기 시간을 조금씩 줄여서(BTN2_DELAY_STEP_MS씩 감소,
+   BTN2_MIN_DELAY_MS 밑으로는 안 내려감) 반복할수록 빨라지며, 속도는 3번 반복
+   내내 리셋되지 않고 계속 가속된다. */
 #define BTN2_INITIAL_DELAY_MS 1000
-#define BTN2_DELAY_STEP_MS    20
+#define BTN2_DELAY_STEP_MS    40
 #define BTN2_MIN_DELAY_MS     50
-#define BTN2_LAP_COUNT        3
+#define BTN2_REPEAT_COUNT     3
 
 static void BTN2_Action(void)
 {
   uint16_t delay = BTN2_INITIAL_DELAY_MS;
 
-  for (uint8_t lap = 0; lap < BTN2_LAP_COUNT; lap++)
+  for (uint8_t rep = 0; rep < BTN2_REPEAT_COUNT; rep++)
   {
-    /* 가는 방향: LED0 -> LED7 */
     for (uint8_t i = 0; i <= 7; i++)
     {
       ledIndex = i;
       SetDecoderOutput(ledIndex);
       HAL_Delay(delay);
-      if (delay > BTN2_MIN_DELAY_MS) { delay -= BTN2_DELAY_STEP_MS; }
-    }
-    /* 오는 방향: LED7 -> LED0 (양 끝 LED가 두 번 연속 켜지지 않도록 6부터 시작) */
-    for (int8_t i = 6; i >= 0; i--)
-    {
-      ledIndex = (uint8_t)i;
-      SetDecoderOutput(ledIndex);
-      HAL_Delay(delay);
-      if (delay > BTN2_MIN_DELAY_MS) { delay -= BTN2_DELAY_STEP_MS; }
+      /* 하한(BTN2_MIN_DELAY_MS)까지만 줄이고 그 아래로는 내려가지 않는다.
+         한 스텝 더 빼면 하한 밑으로 떨어지는 경우엔 하한 값으로 고정. */
+      if (delay >= BTN2_MIN_DELAY_MS + BTN2_DELAY_STEP_MS) { delay -= BTN2_DELAY_STEP_MS; }
+      else { delay = BTN2_MIN_DELAY_MS; }
     }
   }
 }
 
-/* 아직 미구현 - 추후 동작 내용 채워 넣을 자리 */
+/* BTN3: LED 배선 매핑 확인용 테스트.
+   index를 0부터 7까지 하나씩, 각각 BTN3_TEST_DWELL_MS(3초)씩 길게 켜두고
+   동시에 UART(USART2, 115200 8N1, ST-Link 가상 COM 포트)로 현재 index와
+   그에 대응하는 74LS138 출력/물리 핀 번호를 찍어준다.
+
+   사용법: 시리얼 모니터를 열고 BTN3을 누른 뒤, 메시지가 바뀔 때마다
+   실제로 어떤 위치의 LED가 켜지는지 순서대로 적어두면 된다.
+   - 화면 순서대로 LED가 한 칸씩 이동하면 → 배선 정상, 코드도 정상
+   - 화면은 0,1,2...로 잘 올라가는데 LED가 여기저기 튀면 → 배선 순서 문제
+   - 화면은 잘 나오는데 LED가 아예 안 켜지는 index가 있으면 → 그 출력 핀 배선/LED 불량 */
+#define BTN3_TEST_DWELL_MS 3000
+
+/* index -> 74LS138 출력(Y)과 실제 칩 핀 번호. Y0~Y6은 15번에서 9번으로 내림차순이고
+   Y7만 7번 핀이라 물리적 순서가 index 순서와 다르다는 점에 주의. */
+static const char *const decoderPinLabel[8] = {
+  "index=0 -> Y0 (74LS138 pin 15)\r\n",
+  "index=1 -> Y1 (74LS138 pin 14)\r\n",
+  "index=2 -> Y2 (74LS138 pin 13)\r\n",
+  "index=3 -> Y3 (74LS138 pin 12)\r\n",
+  "index=4 -> Y4 (74LS138 pin 11)\r\n",
+  "index=5 -> Y5 (74LS138 pin 10)\r\n",
+  "index=6 -> Y6 (74LS138 pin 9)\r\n",
+  "index=7 -> Y7 (74LS138 pin 7)\r\n",
+};
+
 static void BTN3_Action(void)
 {
+  static const char header[] = "\r\n--- LED mapping test (3s each) ---\r\n";
+
+  HAL_UART_Transmit(&huart2, (const uint8_t *)header, sizeof(header) - 1, HAL_MAX_DELAY);
+
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    ledIndex = i;
+    SetDecoderOutput(ledIndex);
+    HAL_UART_Transmit(&huart2, (const uint8_t *)decoderPinLabel[i],
+                      strlen(decoderPinLabel[i]), HAL_MAX_DELAY);
+    HAL_Delay(BTN3_TEST_DWELL_MS);
+  }
 }
 
 /* 아직 미구현 - 추후 동작 내용 채워 넣을 자리 */
