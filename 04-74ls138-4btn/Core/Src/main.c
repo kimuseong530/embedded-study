@@ -23,7 +23,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <string.h>   /* BTN3 매핑 테스트에서 UART 문자열 길이 계산(strlen)에 사용 */
+#include <string.h>   /* LED 매핑 테스트에서 UART 문자열 길이 계산(strlen)에 사용 */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -78,6 +78,7 @@ void SystemClock_Config(void);
 static void Button_Init(Button_t *btn);
 static uint8_t Button_Update(Button_t *btn);
 static void SetDecoderOutput(uint8_t index);
+static void LedMappingTest(void);
 
 static void BTN1_Action(void);
 static void BTN2_Action(void);
@@ -141,7 +142,7 @@ int main(void)
 
 #if RUN_MAPPING_TEST_AT_BOOT
   /* 배선 매핑 확인이 끝나면 RUN_MAPPING_TEST_AT_BOOT를 0으로 바꿔서 끄면 된다. */
-  BTN3_Action();
+  LedMappingTest();
 #endif
   /* USER CODE END 2 */
 
@@ -325,17 +326,17 @@ static void BTN2_Action(void)
   }
 }
 
-/* BTN3: LED 배선 매핑 확인용 테스트.
-   index를 0부터 7까지 하나씩, 각각 BTN3_TEST_DWELL_MS(3초)씩 길게 켜두고
+/* LED 배선 매핑 확인용 테스트 (RUN_MAPPING_TEST_AT_BOOT가 1일 때 부팅 시 실행).
+   index를 0부터 7까지 하나씩, 각각 LED_MAPPING_TEST_DWELL_MS(3초)씩 길게 켜두고
    동시에 UART(USART2, 115200 8N1, ST-Link 가상 COM 포트)로 현재 index와
    그에 대응하는 74LS138 출력/물리 핀 번호를 찍어준다.
 
-   사용법: 시리얼 모니터를 열고 BTN3을 누른 뒤, 메시지가 바뀔 때마다
-   실제로 어떤 위치의 LED가 켜지는지 순서대로 적어두면 된다.
+   사용법: 시리얼 모니터를 열고 리셋한 뒤, 메시지가 바뀔 때마다 실제로 어떤
+   위치의 LED가 켜지는지 순서대로 적어두면 된다.
    - 화면 순서대로 LED가 한 칸씩 이동하면 → 배선 정상, 코드도 정상
    - 화면은 0,1,2...로 잘 올라가는데 LED가 여기저기 튀면 → 배선 순서 문제
    - 화면은 잘 나오는데 LED가 아예 안 켜지는 index가 있으면 → 그 출력 핀 배선/LED 불량 */
-#define BTN3_TEST_DWELL_MS 3000
+#define LED_MAPPING_TEST_DWELL_MS 3000
 
 /* index -> 74LS138 출력(Y)과 실제 칩 핀 번호. Y0~Y6은 15번에서 9번으로 내림차순이고
    Y7만 7번 핀이라 물리적 순서가 index 순서와 다르다는 점에 주의. */
@@ -350,7 +351,7 @@ static const char *const decoderPinLabel[8] = {
   "index=7 -> Y7 (74LS138 pin 7)\r\n",
 };
 
-static void BTN3_Action(void)
+static void LedMappingTest(void)
 {
   static const char header[] = "\r\n--- LED mapping test (3s each) ---\r\n";
 
@@ -362,7 +363,25 @@ static void BTN3_Action(void)
     SetDecoderOutput(ledIndex);
     HAL_UART_Transmit(&huart2, (const uint8_t *)decoderPinLabel[i],
                       strlen(decoderPinLabel[i]), HAL_MAX_DELAY);
-    HAL_Delay(BTN3_TEST_DWELL_MS);
+    HAL_Delay(LED_MAPPING_TEST_DWELL_MS);
+  }
+}
+
+/* BTN3을 누르면 예전에 A/B/C 배선이 한 칸씩 밀려 꽂혀 있을 때 실제로
+   관찰됐던 점등 순서 "1,3,5,7,2,4,6,8"(물리적 LED 위치, 1번째부터 셈)을
+   그대로 재현한다. 지금은 배선이 정상이라 이 물리적 순서를 그대로 내려면
+   Y-index(0~7)를 그 순서에 맞게 미리 나열해서 SetDecoderOutput에 넣어주면
+   된다: 물리 위치 1,3,5,7,2,4,6,8 -> index 0,2,4,6,1,3,5,7. */
+#define BTN3_STEP_MS 300
+static const uint8_t btn3PlaybackOrder[8] = { 0, 2, 4, 6, 1, 3, 5, 7 };
+
+static void BTN3_Action(void)
+{
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    ledIndex = btn3PlaybackOrder[i];
+    SetDecoderOutput(ledIndex);
+    HAL_Delay(BTN3_STEP_MS);
   }
 }
 
