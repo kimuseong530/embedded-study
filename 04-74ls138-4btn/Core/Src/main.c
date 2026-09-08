@@ -280,9 +280,38 @@ static void BTN1_Action(void)
   }
 }
 
-/* 아직 미구현 - 추후 동작 내용 채워 넣을 자리 */
+/* BTN2를 누르면 BTN1과 같은 방식으로 LED가 순서대로 켜지되, LED0→LED7→LED0으로
+   왕복하는 동작을 3번 반복한다. 매 스텝마다 대기 시간을 조금씩 줄여서
+   (BTN2_DELAY_STEP_MS씩 감소, BTN2_MIN_DELAY_MS 밑으로는 안 내려감) 갈수록
+   빨라지는 느낌을 준다 - 3번 왕복하는 동안 속도가 리셋되지 않고 계속 가속된다. */
+#define BTN2_INITIAL_DELAY_MS 1000
+#define BTN2_DELAY_STEP_MS    20
+#define BTN2_MIN_DELAY_MS     50
+#define BTN2_LAP_COUNT        3
+
 static void BTN2_Action(void)
 {
+  uint16_t delay = BTN2_INITIAL_DELAY_MS;
+
+  for (uint8_t lap = 0; lap < BTN2_LAP_COUNT; lap++)
+  {
+    /* 가는 방향: LED0 -> LED7 */
+    for (uint8_t i = 0; i <= 7; i++)
+    {
+      ledIndex = i;
+      SetDecoderOutput(ledIndex);
+      HAL_Delay(delay);
+      if (delay > BTN2_MIN_DELAY_MS) { delay -= BTN2_DELAY_STEP_MS; }
+    }
+    /* 오는 방향: LED7 -> LED0 (양 끝 LED가 두 번 연속 켜지지 않도록 6부터 시작) */
+    for (int8_t i = 6; i >= 0; i--)
+    {
+      ledIndex = (uint8_t)i;
+      SetDecoderOutput(ledIndex);
+      HAL_Delay(delay);
+      if (delay > BTN2_MIN_DELAY_MS) { delay -= BTN2_DELAY_STEP_MS; }
+    }
+  }
 }
 
 /* 아직 미구현 - 추후 동작 내용 채워 넣을 자리 */
