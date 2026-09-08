@@ -385,9 +385,25 @@ static void BTN3_Action(void)
   }
 }
 
-/* 아직 미구현 - 추후 동작 내용 채워 넣을 자리 */
+/* BTN4를 한 번 누르면 1,8,2,7,3,6,4,5 순서(물리적 LED 위치, 1번째부터 셈)로
+   자동으로 한 번 훑고 끝난다 - BTN1처럼 누르는 즉시 끝까지 자동 재생되는
+   애니메이션. 지금은 배선이 정상이라 물리 위치 순서를 그대로 index(0~7)로
+   바꾸면 1,8,2,7,3,6,4,5 -> index 0,7,1,6,2,5,3,4가 된다.
+   74LS138은 8개 출력 중 항상 하나가 활성 상태라(G1이 VCC에 직결, MCU가 끌
+   수 있는 핀이 없음) 완전한 소등은 하드웨어 구조상 불가능하다. 그래서
+   마지막 위치(5번째)에 불이 켜진 채로 멈추고, 다음에 BTN4를 다시 누르면
+   처음(1번째)부터 다시 훑는다. */
+#define BTN4_STEP_MS 300
+static const uint8_t btn4PlaybackOrder[8] = { 0, 7, 1, 6, 2, 5, 3, 4 };
+
 static void BTN4_Action(void)
 {
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    ledIndex = btn4PlaybackOrder[i];
+    SetDecoderOutput(ledIndex);
+    HAL_Delay(BTN4_STEP_MS);
+  }
 }
 /* USER CODE END 4 */
 
