@@ -24,6 +24,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>   /* LED 매핑 테스트에서 UART 문자열 길이 계산(strlen)에 사용 */
+#include <stdio.h>    /* 상태 메시지 조립(snprintf)에 사용 */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -79,6 +80,8 @@ static void Button_Init(Button_t *btn);
 static uint8_t Button_Update(Button_t *btn);
 static void SetDecoderOutput(uint8_t index);
 static void LedMappingTest(void);
+static void UartPrint(const char *msg);
+static void UartPrintStep(const char *label, uint8_t step, uint8_t position);
 
 static void BTN1_Action(void);
 static void BTN2_Action(void);
@@ -134,11 +137,14 @@ int main(void)
   SetDecoderOutput(ledIndex);  /* 시작 시 LED0(index 0)을 켠 상태로 초기화 */
 
   /* 부팅 배너: UART가 살아있는지 바로 확인하기 위한 신호.
-     리셋하자마자 이 줄이 시리얼 모니터에 뜨면 UART/포트/보드레이트는 정상이라는 뜻. */
-  {
-    static const char banner[] = "\r\n=== 04-74ls138-4btn ready (115200 8N1) ===\r\n";
-    HAL_UART_Transmit(&huart2, (const uint8_t *)banner, sizeof(banner) - 1, HAL_MAX_DELAY);
-  }
+     리셋하자마자 이 줄이 시리얼 모니터에 뜨면 UART/포트/보드레이트는 정상이라는 뜻.
+     이어서 각 버튼이 어떤 동작인지 안내해두면 모니터만 보고도 구분할 수 있다. */
+  UartPrint("\r\n=== 04-74ls138-4btn ready (115200 8N1) ===\r\n");
+  UartPrint("  BTN1: 1초 간격 순차 점등 (1->8)\r\n");
+  UartPrint("  BTN2: 편도 3회 반복, 갈수록 가속\r\n");
+  UartPrint("  BTN3: 1,3,5,7,2,4,6,8 순서 재생\r\n");
+  UartPrint("  BTN4: 1,8,2,7,3,6,4,5 순서 재생\r\n");
+  UartPrint("버튼을 누르면 진행 상황이 여기에 출력됩니다.\r\n");
 
 #if RUN_MAPPING_TEST_AT_BOOT
   /* 배선 매핑 확인이 끝나면 RUN_MAPPING_TEST_AT_BOOT를 0으로 바꿔서 끄면 된다. */
@@ -282,6 +288,34 @@ static void SetDecoderOutput(uint8_t index)
   HAL_GPIO_WritePin(DEC_C_GPIO_Port, DEC_C_Pin, (index & 0x04U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
+/**
+  * @brief  널 종료 문자열을 USART2(ST-Link 가상 COM 포트)로 그대로 내보낸다.
+  */
+static void UartPrint(const char *msg)
+{
+  HAL_UART_Transmit(&huart2, (const uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+}
+
+/**
+  * @brief  현재 진행 상황 한 줄을 시리얼 모니터로 내보낸다.
+  * @param  label    어떤 버튼 동작인지 (예: "BTN1")
+  * @param  step     이번 동작 안에서 몇 번째 스텝인지 (1부터)
+  * @param  position 지금 켜진 LED의 물리적 위치 (1번째~8번째)
+  *
+  * 배선이 정상이라 index(0~7)와 물리 위치가 1:1이므로 position은 index+1을 넘기면 된다.
+  */
+static void UartPrintStep(const char *label, uint8_t step, uint8_t position)
+{
+  char buf[64];
+  int len = snprintf(buf, sizeof(buf), "  [%s] step %u/8 -> LED %u번째\r\n",
+                     label, (unsigned)step, (unsigned)position);
+
+  if (len > 0)
+  {
+    HAL_UART_Transmit(&huart2, (const uint8_t *)buf, (uint16_t)len, HAL_MAX_DELAY);
+  }
+}
+
 /* TODO: BTN2~4 동작은 여기에 정의. 예) ledIndex를 갱신한 뒤 SetDecoderOutput(ledIndex) 호출 */
 
 /* BTN1을 누르면 LED0부터 LED7까지 1초 간격으로 순서대로 하나씩 켠다.
@@ -290,12 +324,17 @@ static void SetDecoderOutput(uint8_t index)
    메인 루프가 멈춰 있어 다른 버튼 입력은 그 사이에 받아들여지지 않는다. */
 static void BTN1_Action(void)
 {
+  UartPrint("\r\n[BTN1] 시작: 1초 간격 순차 점등 (1->8)\r\n");
+
   for (uint8_t i = 0; i < 8; i++)
   {
     ledIndex = i;
     SetDecoderOutput(ledIndex);
+    UartPrintStep("BTN1", i + 1, ledIndex + 1);
     HAL_Delay(1000);
   }
+
+  UartPrint("[BTN1] 종료\r\n");
 }
 
 /* BTN2를 누르면 BTN1과 같은 방식으로 LED0->LED7을 한 방향(편도)으로 켜는 동작을
@@ -311,12 +350,19 @@ static void BTN2_Action(void)
 {
   uint16_t delay = BTN2_INITIAL_DELAY_MS;
 
+  UartPrint("\r\n[BTN2] 시작: 편도 3회 반복, 갈수록 가속\r\n");
+
   for (uint8_t rep = 0; rep < BTN2_REPEAT_COUNT; rep++)
   {
+    char repMsg[40];
+    int repLen = snprintf(repMsg, sizeof(repMsg), " -- %u회차 --\r\n", (unsigned)(rep + 1));
+    if (repLen > 0) { HAL_UART_Transmit(&huart2, (const uint8_t *)repMsg, (uint16_t)repLen, HAL_MAX_DELAY); }
+
     for (uint8_t i = 0; i <= 7; i++)
     {
       ledIndex = i;
       SetDecoderOutput(ledIndex);
+      UartPrintStep("BTN2", i + 1, ledIndex + 1);
       HAL_Delay(delay);
       /* 하한(BTN2_MIN_DELAY_MS)까지만 줄이고 그 아래로는 내려가지 않는다.
          한 스텝 더 빼면 하한 밑으로 떨어지는 경우엔 하한 값으로 고정. */
@@ -324,6 +370,8 @@ static void BTN2_Action(void)
       else { delay = BTN2_MIN_DELAY_MS; }
     }
   }
+
+  UartPrint("[BTN2] 종료\r\n");
 }
 
 /* LED 배선 매핑 확인용 테스트 (RUN_MAPPING_TEST_AT_BOOT가 1일 때 부팅 시 실행).
@@ -377,12 +425,17 @@ static const uint8_t btn3PlaybackOrder[8] = { 0, 2, 4, 6, 1, 3, 5, 7 };
 
 static void BTN3_Action(void)
 {
+  UartPrint("\r\n[BTN3] 시작: 1,3,5,7,2,4,6,8 순서 재생\r\n");
+
   for (uint8_t i = 0; i < 8; i++)
   {
     ledIndex = btn3PlaybackOrder[i];
     SetDecoderOutput(ledIndex);
+    UartPrintStep("BTN3", i + 1, ledIndex + 1);
     HAL_Delay(BTN3_STEP_MS);
   }
+
+  UartPrint("[BTN3] 종료\r\n");
 }
 
 /* BTN4를 한 번 누르면 1,8,2,7,3,6,4,5 순서(물리적 LED 위치, 1번째부터 셈)로
@@ -398,12 +451,17 @@ static const uint8_t btn4PlaybackOrder[8] = { 0, 7, 1, 6, 2, 5, 3, 4 };
 
 static void BTN4_Action(void)
 {
+  UartPrint("\r\n[BTN4] 시작: 1,8,2,7,3,6,4,5 순서 재생\r\n");
+
   for (uint8_t i = 0; i < 8; i++)
   {
     ledIndex = btn4PlaybackOrder[i];
     SetDecoderOutput(ledIndex);
+    UartPrintStep("BTN4", i + 1, ledIndex + 1);
     HAL_Delay(BTN4_STEP_MS);
   }
+
+  UartPrint("[BTN4] 종료\r\n");
 }
 /* USER CODE END 4 */
 
